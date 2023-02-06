@@ -1,4 +1,4 @@
-# RepeatMasker Salmnon Index and Analysis
+# RepeatMasker Salmon Index and Analysis
 
 Create a new gentrome using the RepeatMasker (rmsk) input locations from all 
 unique rmsk instances in the genome from the 5 main TE families only. 
