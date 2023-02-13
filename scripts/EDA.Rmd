@@ -1,0 +1,106 @@
+---
+title: "Import Counts"
+output: html_document
+date: "2023-02-08"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Load libraries
+
+```{r}
+suppressPackageStartupMessages(library(coriell))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(tximport))
+suppressPackageStartupMessages(library(edgeR))
+suppressPackageStartupMessages(library(GenomicRanges))
+suppressPackageStartupMessages(library(ggplot2))
+```
+
+## Read in quant files with `tximport`
+
+```{r}
+# List the quant files
+quant_files <- list.files(
+  path = "../data/PRJNA413957/quants/",
+  pattern = "quant.sf",
+  recursive = TRUE,
+  full.names = TRUE
+  )
+names(quant_files) <- regmatches(quant_files, regexec("SAMN[0-9]+", quant_files))
+
+# Import the file mapping txs to gene ids and hashes to rep elements
+tx2gene <- fread("../data/tx2gene.tsv")
+
+# Import counts with an offset, scaling for the length of the transcript
+txi <- tximport(
+  quant_files, 
+  tx2gene = tx2gene,
+  type = "salmon",
+  countsFromAbundance = "lengthScaledTPM",
+  dropInfReps = FALSE,
+  importer = fread,
+)
+```
+
+## EDA on counts
+
+These counts comprise ALL TEs throughout the genome. They have not yet been 
+partitioned into intron, exon, of intergenic elements.
+
+```{r}
+# Extract scaled counts
+counts <- txi$counts
+counts <- counts[rowSums(counts) > 0, ]
+
+# Read in sample metadata
+metadata <- fread("annotation-small.tsv")
+metadata <- unique(metadata[, .(BioSample, group)])
+setDF(metadata, rownames = metadata$BioSample)
+metadata <- metadata[colnames(counts), ]
+
+# Create edgeR object and normalize counts -- no filtering just yet
+y <- DGEList(counts, samples = metadata)
+y <- calcNormFactors(y, method = "TMMwsp")  # For protection against many 0s
+logcounts <- cpm(y, log = TRUE, prior.count = 1)
+
+# Extract only the normalized TE counts
+logcounts.repeats <- logcounts[!grepl("^ENSG", rownames(logcounts)), ]
+```
+
+Are the counts consistent between samples?
+
+```{r}
+plotScatter <- function(sample1, sample2, ...) {
+  dt <- as.data.table(logcounts.repeats, keep.rownames = "Feature")[, .SD, .SDcols = c("Feature", sample1, sample2)]
+  dt[, c("Class", "Family", "Subfamily") := tstrsplit(Feature, ".", fixed = TRUE)]
+  
+  ggplot(dt, aes_string(x = sample1, y = sample2)) +
+    geom_point(...) +
+    geom_abline(slope = 1, linetype = 2, color = "red") +
+    theme_coriell()
+}
+
+plotScatter("SAMN07775198", "SAMN07775199", alpha = 0.5) +
+  facet_wrap(~Class)
+
+plotScatter("SAMN07775198", "SAMN07775201", alpha = 0.5) +
+  facet_wrap(~Class)
+```
+
+Count distributions
+
+```{r}
+
+plot_boxplot(
+  x = logcounts.repeats[grepl("SINE", rownames(logcounts.repeats)), ], 
+  metadata = metadata, 
+  fillBy = "group",
+  rle = TRUE,
+  violin = TRUE
+  ) + 
+  theme_coriell()
+```
+
